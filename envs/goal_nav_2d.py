@@ -1,4 +1,3 @@
-# envs/goal_nav_2d.py
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -9,10 +8,11 @@ def wrap_angle(a):
 class GoalNav2DEnv(gym.Env):
     """
     State:  [x, y, theta]
-    Goal:   [gx, gy] (passed in via 'desired_goal' key, HER-style)
-    Action: [v, w]   (linear vel, angular vel)
-    Reward: sparse (success) + shaped (-distance)
+    Goal:   [gx, gy]
+    Action: [v, w]
+    Reward: +1 for reaching goal, -dist for progress, -10 for collision
     """
+
     metadata = {"render_modes": ["human"]}
 
     def __init__(
@@ -23,8 +23,10 @@ class GoalNav2DEnv(gym.Env):
         success_radius=0.1,
         v_max=0.5,
         w_max=1.5,
-        seed=None,
-        continuous_goals=True
+        obstacles=None,  # NEW
+        collision_penalty=-10.0,  # NEW
+        terminate_on_collision=True,  # NEW
+        seed=None
     ):
         super().__init__()
         self.world_size = world_size
@@ -33,9 +35,13 @@ class GoalNav2DEnv(gym.Env):
         self.success_radius = success_radius
         self.v_max = v_max
         self.w_max = w_max
-        self.continuous_goals = continuous_goals
 
-        # obs = dict for HER-style: observation, desired_goal, achieved_goal
+        self.obstacles = obstacles if obstacles else []
+        self.collision_penalty = collision_penalty
+        self.terminate_on_collision = terminate_on_collision
+
+        self._rng = np.random.default_rng(seed)
+
         obs_high = np.array([world_size, world_size, np.pi], dtype=np.float32)
         self.observation_space = spaces.Dict({
             "observation": spaces.Box(-obs_high, obs_high, dtype=np.float32),
@@ -48,58 +54,91 @@ class GoalNav2DEnv(gym.Env):
             dtype=np.float32
         )
 
-        self._rng = np.random.default_rng(seed)
         self.state = None
         self.goal = None
         self.steps = 0
 
-    def seed(self, seed=None):
-        self._rng = np.random.default_rng(seed)
+    def _sample_free_position(self):
+        while True:
+            x = self._rng.uniform(-self.world_size, self.world_size)
+            y = self._rng.uniform(-self.world_size, self.world_size)
+            collision = any(np.hypot(x - ox, y - oy) < r for (ox, oy, r) in self.obstacles)
+            if not collision:
+                return np.array([x, y], dtype=np.float32)
 
     def _sample_state(self):
-        x = self._rng.uniform(-self.world_size, self.world_size)
-        y = self._rng.uniform(-self.world_size, self.world_size)
+        xy = self._sample_free_position()
         th = self._rng.uniform(-np.pi, np.pi)
-        return np.array([x, y, th], dtype=np.float32)
+        return np.array([*xy, th], dtype=np.float32)
 
     def _sample_goal(self):
-        gx = self._rng.uniform(-self.world_size, self.world_size)
-        gy = self._rng.uniform(-self.world_size, self.world_size)
-        return np.array([gx, gy], dtype=np.float32)
+        return self._sample_free_position()
+
 
     def reset(self, seed=None, options=None):
+        multigoal = True
         if seed is not None:
-            self.seed(seed)
+            self._rng = np.random.default_rng(seed)
         self.steps = 0
         self.state = self._sample_state()
         self.goal = self._sample_goal()
         return self._get_obs(), {}
+        ep_obs = env.reset()[0]
+        if not multi_goal:
+            env.goal = fixed_goal.copy()
+            ep_obs["desired_goal"] = fixed_goal.copy()
+
 
     def step(self, action):
         self.steps += 1
         v, w = np.clip(action, self.action_space.low, self.action_space.high)
 
-        # Unpack state
         x, y, th = self.state
+        x_new = x + v * np.cos(th) * self.dt
+        y_new = y + v * np.sin(th) * self.dt
+        th_new = wrap_angle(th + w * self.dt)
+        new_state = np.array([x_new, y_new, th_new], dtype=np.float32)
 
-        # Differential drive kinematics (unicycle)
-        x  = x + v * np.cos(th) * self.dt
-        y  = y + v * np.sin(th) * self.dt
-        th = wrap_angle(th + w * self.dt)
+        # Check for collision
+        collided = self._check_collision(x_new, y_new)
 
-        self.state = np.array([x, y, th], dtype=np.float32)
+        # Check if reached goal
+        dist_to_goal = np.linalg.norm(self.goal - new_state[:2])
+        reached_goal = dist_to_goal < self.success_radius
+        old_distance = np.linalg.norm(self.goal - self.state[:2])
+        new_distance = np.linalg.norm(self.goal - new_state[:2])
 
-        # Compute reward
-        dist = np.linalg.norm(self.goal - self.state[:2])
-        success = dist < self.success_radius
-        reward = -dist  # dense shaping
-        if success:
-            reward += 1.0
 
-        terminated = success
-        truncated = self.steps >= self.max_steps
+        if collided:
+            reward = self.collision_penalty
+            terminated = self.terminate_on_collision
+            truncated = not terminated
+        elif reached_goal:
+            reward = 1.0
+            terminated = True
+            truncated = False
+        else:
+            reward = 0
+            reward += (old_distance - new_distance) * 0.8
 
-        return self._get_obs(), reward, terminated, truncated, {"is_success": success}
+            # Alignment
+            goal_vec = self.goal - self.state[:2]
+            goal_dir = goal_vec / (np.linalg.norm(goal_vec) + 1e-6)
+            heading = np.array([np.cos(new_state[2]), np.sin(new_state[2])])
+            alignment = np.dot(goal_dir, heading)
+            reward += alignment * 0.5
+
+            # Time penalty
+            reward -= 0.01
+
+            # Goal bonus
+            if reached_goal:
+                reward += 2.0  # distance shaping
+            terminated = False
+            truncated = False
+
+        self.state = new_state
+        return self._get_obs(), reward, terminated, truncated, {"is_success": reached_goal, "collision": collided}
 
     def _get_obs(self):
         obs = self.state.copy()
@@ -110,7 +149,12 @@ class GoalNav2DEnv(gym.Env):
             "achieved_goal": ag
         }
 
+    def _check_collision(self, x, y):
+        for ox, oy, r in self.obstacles:
+            if np.hypot(x - ox, y - oy) < r:
+                return True
+        return False
+
     def compute_reward(self, achieved_goal, desired_goal, info=None):
         d = np.linalg.norm(achieved_goal - desired_goal, axis=-1)
-        r = -(d > self.success_radius).astype(np.float32)
-        return r
+        return (d < self.success_radius).astype(np.float32) * 1.0

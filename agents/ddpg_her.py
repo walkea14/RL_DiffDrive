@@ -141,8 +141,11 @@ class HERReplayBuffer:
         self.last_ag = ag_next
 
     def end_episode(self):
-        # push the episode transitions to storage
         T = len(self.ep_obs)
+        if T < 2:
+            print("Warning: episode too short, skipping HER storage.")
+            return  # Skip malformed/short episodes
+
         episode = dict(
             o=np.array(self.ep_obs, dtype=np.float32),
             ag=np.array(self.ep_ag, dtype=np.float32),
@@ -153,10 +156,12 @@ class HERReplayBuffer:
             o2=np.vstack([self.ep_obs[1:], self.last_obs]),
             ag2=np.vstack([self.ep_ag[1:], self.last_ag])
         )
+
         self.storage.append(episode)
         if len(self.storage) > self.max_size:
             self.storage.pop(0)
         self.size = min(self.size + T, self.max_size)
+
 
     def sample_batch(self, batch_size):
         # sample episodes, then sample time-steps inside each
