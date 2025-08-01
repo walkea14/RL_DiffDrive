@@ -114,22 +114,25 @@ class GoalNav2DEnv(gym.Env):
             terminated = self.terminate_on_collision
             truncated = not terminated
         elif reached_goal:
-            reward = 1.0
+            reward = 2.0
             terminated = True
             truncated = False
         else:
             reward = 0
-            reward += (old_distance - new_distance) * 0.8
+            reward += (old_distance - new_distance) * 1.2
 
             # Alignment
             goal_vec = self.goal - self.state[:2]
             goal_dir = goal_vec / (np.linalg.norm(goal_vec) + 1e-6)
             heading = np.array([np.cos(new_state[2]), np.sin(new_state[2])])
             alignment = np.dot(goal_dir, heading)
-            reward += alignment * 0.5
+            reward += alignment * 0.8
 
             # Time penalty
             reward -= 0.01
+
+            #Excessive turn penalty
+            reward -= 0.05 * abs(w)
 
             # Goal bonus
             if reached_goal:

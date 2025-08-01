@@ -73,11 +73,11 @@ class LivePlot2D:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
-        buf = BytesIO()
-        self.fig.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        self._frames.append(imageio.v2.imread(buf))
-        buf.close()
+        #buf = BytesIO()
+        #self.fig.savefig(buf, format='png', dpi=100)
+        #buf.seek(0)
+        #self._frames.append(imageio.v2.imread(buf))
+        #buf.close()
 
         plt.pause(0.001)
 
