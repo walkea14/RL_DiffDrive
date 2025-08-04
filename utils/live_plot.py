@@ -8,12 +8,13 @@ class LivePlot2D:
     def __init__(self, world_size=5.0, obstacles=None, trail_len=None):
         self.world_size = world_size
         self.obstacles = obstacles if obstacles else []
+        self.trail = []
         self.trail_len = trail_len
 
         self.agent_pos = (0, 0)
         self.agent_heading = 0
         self.goal_pos = (1, 1)
-        self.trail = []
+
 
         self._frames = []
 
@@ -22,7 +23,7 @@ class LivePlot2D:
         self.agent_arrow = None
         self.goal_circle = None
         self.obstacle_patches = []
-        self.trail_line, = self.ax.plot([], [], 'b-', linewidth=1, alpha=0.5)
+        self.trail_line, = self.ax.plot([], [], 'b-', linewidth=1, alpha=0.7)
 
         self._setup()
 
@@ -65,7 +66,7 @@ class LivePlot2D:
         if self.trail_len is not None and len(self.trail) > self.trail_len:
             self.trail = self.trail[-self.trail_len:]
 
-        if self.trail:
+        if len(self.trail) >= 2:
             tx, ty = zip(*self.trail)
             self.trail_line.set_data(tx, ty)
 
@@ -83,6 +84,7 @@ class LivePlot2D:
 
     def reset_trail(self):
         self.trail = []
+        self.trail_line.set_data([], [])
 
     def save_gif(self, filename="trajectory.gif"):
         if not self._frames:

@@ -80,8 +80,13 @@ class GoalNav2DEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self.steps = 0
-        self.state = self._sample_state()
-        self.goal = self._sample_goal()
+
+        #Random vs set start/goal toggle
+        #self.state = self._sample_state()
+        #self.goal = self._sample_goal()
+        self.state = np.array([-4.0, -4.0, 0.0], dtype=np.float32)
+        self.goal = np.array([4.0, -4.0], dtype=np.float32)
+
         return self._get_obs(), {}
         ep_obs = env.reset()[0]
         if not multi_goal:
@@ -114,29 +119,40 @@ class GoalNav2DEnv(gym.Env):
             terminated = self.terminate_on_collision
             truncated = not terminated
         elif reached_goal:
-            reward = 2.0
+            reward = 200
             terminated = True
             truncated = False
         else:
             reward = 0
-            reward += (old_distance - new_distance) * 1.2
+            if (old_distance-new_distance) > 0:
+                reward += 1
+            else:
+                reward = -2.5
+            #reward += 2.4 * (old_distance - new_distance)
 
             # Alignment
             goal_vec = self.goal - self.state[:2]
             goal_dir = goal_vec / (np.linalg.norm(goal_vec) + 1e-6)
             heading = np.array([np.cos(new_state[2]), np.sin(new_state[2])])
             alignment = np.dot(goal_dir, heading)
-            reward += alignment * 0.8
+            reward += alignment * 0.6
+
+            #Velocity reward
+            reward += 0.2*v
 
             # Time penalty
-            reward -= 0.01
+            #reward -= 0.04
 
             #Excessive turn penalty
-            reward -= 0.05 * abs(w)
+            reward -= 0.6 * abs(w) ** 2
+
+            #Penalize reverse motion
+            if v < 0:
+                reward -= 0.5
 
             # Goal bonus
             if reached_goal:
-                reward += 2.0  # distance shaping
+                reward += 200  # distance shaping
             terminated = False
             truncated = False
 

@@ -7,7 +7,11 @@ from agents.ddpg_her import DDPGAgentHER, DEVICE
 from utils.live_plot import LivePlot2D
 
 multi_goal = False
-fixed_goal = np.array([2.0, -2.0])  # pick any reachable goal
+fixed_goal = np.array([4.0, -4.0])  #fixed goal
+
+initial_noise = 0.8
+final_noise = 0.1
+decay_rate = 0.995
 
 
 def flatten_obs(obs_dict):
@@ -38,8 +42,11 @@ if __name__ == "__main__":
         goal_dim=goal_dim,
         act_dim=act_dim,
         act_limit=act_limit,
-        buffer_size=200_000
+        buffer_size=200_000,
+        her_ratio = 0.4
     )
+    agent.replay.storage.clear()
+    agent.replay.size = 0
 
     # LIVE PLOT
     viz = LivePlot2D(world_size=env.world_size, obstacles=env.obstacles)
@@ -51,12 +58,26 @@ if __name__ == "__main__":
         ep_obs = env.reset()[0]
         agent.replay.start_episode()
         viz.reset_trail()
+        noise_scale = max(final_noise, initial_noise * (decay_rate ** ep))
+
+        if ep < 5:
+            print("Using random policy for early episode", ep)
+            use_random = True
+        else:
+            use_random = False
 
         for t in range(steps_per_episode):
             o = flatten_obs(ep_obs)
             g = ep_obs["desired_goal"]
-            a = agent.act(o, g, noise_scale=0.2)
+            a = agent.act(o, g, noise_scale=noise_scale)
+            if ep % 50 == 0 and t == 0:
+                print(f"Episode {ep} - Action taken: v={a[0]:.2f}, w={a[1]:.2f}")
             ep_obs_next, r, done, trunc, info = env.step(a)
+
+            if use_random:
+                a = env.action_space.sample()
+            else:
+                a = agent.act(o, g, noise_scale=noise_scale)
 
             agent.replay.store_step(
                 obs=o,
@@ -84,6 +105,7 @@ if __name__ == "__main__":
 
         if (ep + 1) % 50 == 0:
             print(f"Episode {ep+1}/{episodes}")
+            print(f"Noise scale at ep {ep}: {noise_scale:.3f}")
 
     torch.save(agent.actor.state_dict(), "ddpg_goal_nav_actor.pt")
     print("Training done.")
